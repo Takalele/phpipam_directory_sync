@@ -2,10 +2,10 @@
 <?php
 
 // Load modules
-$module_path = "/phpipam"
+$module_path = "/phpipam";
 require_once($module_path . "/functions/functions.php");
 include($module_path . "/functions/adLDAP/src/adLDAP.php");
-require_once($module_path . "/phpipam/config.php");
+require_once($module_path . "/config.php");
 
 ///////////////////////////////////////////////////////////////////// V A R I A B L E S  -  T O    B E    S E T ///////////////////////////////////////////////////////////////////////
 
