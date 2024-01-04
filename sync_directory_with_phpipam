@@ -1,0 +1,2 @@
+# Can be mounted to /etc/crontabs/sync_directory_with_phpipam
+*/15    *       *       *       *       /sync_directory_with_phpipam.php
