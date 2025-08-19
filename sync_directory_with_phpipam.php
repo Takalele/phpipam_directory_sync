@@ -7,6 +7,21 @@ require_once($module_path . "/functions/functions.php");
 include($module_path . "/functions/adLDAP/src/adLDAP.php");
 require_once($module_path . "/config.php");
 
+
+require_once($module_path . "/functions/php_poly_fill.php");
+if (!function_exists('pf_json_decode')) {
+    function pf_json_decode($string, $assoc = false) {
+        return json_decode($string, $assoc);
+    }
+}
+
+if (!function_exists('pf_explode')) {
+    function pf_explode($delimiter, $string) {
+        return explode($delimiter, $string);
+    }
+}
+
+
 ///////////////////////////////////////////////////////////////////// V A R I A B L E S  -  T O    B E    S E T ///////////////////////////////////////////////////////////////////////
 
 //////////////////////////
@@ -33,8 +48,8 @@ $mail_notify = "Yes";
 // Enable e-mail change log
 $mail_changelog = "Yes";
 // Default widgets for new users
-$default_widgets['Administrator'] = '{"vlan":"1","vrf":"1","pdns":"1","circuits":"1","racks":"1","nat":"1","pstn":"1","customers":"1"}';
-$default_widgets['User'] = '{"vlan":"1","vrf":"1","pdns":"1","circuits":"1","racks":"1","nat":"1","pstn":"1","customers":"1"}';
+$default_widgets['Administrator'] = 'statistics;favourite_subnets;changelog;access_logs;error_logs;top10_hosts_v4';
+$default_widgets['User'] = 'statistics;favourite_subnets;changelog;access_logs;error_logs;top10_hosts_v4';
 
 
 ///////////////////////////////////////////////////////////////////////////////// V A R I A B L E S ///////////////////////////////////////////////////////////////////////////////////
@@ -54,16 +69,16 @@ function phpipam_user_group_membership_sort ($array) {
     // Else sort
     foreach ($array as $array_nr) {
         $phpipam_user_data[$array_nr->username]['groups'] = [];
-        foreach ($array_nr as $key=>$value) { 
+        foreach ($array_nr as $key=>$value) {
             if ($key == "groups") {
                 foreach ( explode(",",$value) as $groupid) {
-                    $tmp = explode(':', str_replace('"', "", preg_replace(array('/{/', '/}/'), "",  $groupid))); 
-                    if(sizeof($tmp) == 2) { 
+                    $tmp = explode(':', str_replace('"', "", preg_replace(array('/{/', '/}/'), "",  $groupid)));
+                    if(sizeof($tmp) == 2) {
                         $phpipam_user_data[$array_nr->username]['groups'][$tmp[0]] = $tmp[1];
                     }
                 }
             }
-            else { 
+            else {
                 $phpipam_user_data[$array_nr->username][$key] = $value;
             }
         }
@@ -80,14 +95,21 @@ echo "--------------------------------------------------------------------------
 echo "\n";
 
 // Initialize DB
-$Database 	= new Database_PDO;
-$User 		= new User ($Database);
-$Admin	 	= new Admin ($Database);
-$Result 	= new Result ();
+$Database       = new Database_PDO;
+$User           = new User ($Database);
+$Admin          = new Admin ($Database);
+$Result         = new Result ();
 
 // Parse parameter from Database
 $db = new Database_PDO;
-$server = $db->getObjectQuery("SELECT * FROM usersAuthMethod WHERE type='$auth_method' LIMIT 0, 1");
+//$server = $db->getObjectQuery("SELECT * FROM usersAuthMethod WHERE type='$auth_method' LIMIT 0, 1");
+
+$server = $db->getObjectQuery(
+    "usersAuthMethod",
+    "SELECT * FROM usersAuthMethod WHERE type = :auth_method LIMIT 1",
+    [ ":auth_method" => $auth_method ]
+);
+
 $auth_methodId = $server->id;
 $params = pf_json_decode($server->params);
 $base_dn=$params->base_dn;
@@ -99,21 +121,21 @@ if($search_dn) { $base_dn=$search_dn; }
 $groups_in_phpipam_db = $Admin->fetch_all_objects ("userGroups", "g_id");
 if ($groups_in_phpipam_db) {
     foreach ($groups_in_phpipam_db as $array_nr) {
-        foreach ($array_nr as $key=>$value) { 
+        foreach ($array_nr as $key=>$value) {
             $phpipam_groups[$array_nr->g_name][$key] = $value;
         }
     }
 }
 
 // Test if login parameters available
-if (is_blank(@$params->adminUsername) || is_blank(@$params->adminPassword))	{ $Result->show("danger", _("Missing credentials"), true); }
+if (is_blank(@$params->adminUsername) || is_blank(@$params->adminPassword))     { $Result->show("danger", _("Missing credentials"), true); }
 
 try {
     //////////////////////////////////////////////
     // Open directory connection
     //////////////////////////////////////////////
-	if($server->type == "NetIQ") { $params->account_suffix = ""; }
-	// Set options
+        if($server->type == "NetIQ") { $params->account_suffix = ""; }
+        // Set options
     $options_base_dn = array(
         'base_dn'=>$params->base_dn,
         'account_suffix'=>$params->account_suffix,
@@ -122,7 +144,7 @@ try {
         'use_tls'=>$params->use_tls,
         'ad_port'=>$params->ad_port,
         );
-	$options_search_dn = array(
+        $options_search_dn = array(
         'base_dn'=>$base_dn,
         'account_suffix'=>$params->account_suffix,
         'domain_controllers'=>pf_explode(";",$params->domain_controllers),
@@ -131,23 +153,23 @@ try {
         'ad_port'=>$params->ad_port,
         );
 
-	// Create providers
+        // Create providers
     $directory_base_dn = new adLDAP($options_base_dn);
     $authUser = $directory_base_dn->authenticate($params->adminUsername, $params->adminPassword);
-	$directory_search_dn = new adLDAP($options_search_dn);
+        $directory_search_dn = new adLDAP($options_search_dn);
     $authUser = $directory_search_dn->authenticate($params->adminUsername, $params->adminPassword);
-    
+
     // Try to login with higher credentials for search
-	$authUser = $directory_search_dn->authenticate($params->adminUsername, $params->adminPassword);
+        $authUser = $directory_search_dn->authenticate($params->adminUsername, $params->adminPassword);
     if (isset($params->adminUsername) && isset($params->adminPassword)) {
-		$authUser = $directory_search_dn->authenticate($params->adminUsername, $params->adminPassword);
-		if (!$authUser) {
-			$Result->show("danger", _("Invalid credentials"), true);
-		}
-	}
-	if ($authUser == false) {
-		$Result->show("danger", _("Invalid credentials"), true);
-	}
+                $authUser = $directory_search_dn->authenticate($params->adminUsername, $params->adminPassword);
+                if (!$authUser) {
+                        $Result->show("danger", _("Invalid credentials"), true);
+                }
+        }
+        if ($authUser == false) {
+                $Result->show("danger", _("Invalid credentials"), true);
+        }
 
     if($server->type == "LDAP") { $directory_search_dn->setUseOpenLDAP(true); }
 
@@ -161,7 +183,7 @@ try {
         $search_filter = ldap_escape("", null, LDAP_ESCAPE_FILTER);
         $groups = @$directory_search_dn->group()->search(adLDAP::ADLDAP_SECURITY_GLOBAL_GROUP, true, "$search_filter*");
     }
-	
+
     echo "\n";
     echo "-------------------------\n";
     echo "Groups found in Directory\n";
@@ -187,14 +209,14 @@ try {
                     "g_name"=>$group,
                     "g_desc"=>$desc . " (imported from directory on ". date($date_format,time()) .")"
                 );
-                if (!$Admin->object_modify("userGroups", "add", "g_id", $values)) { 
-                    $Result->show("danger",  _("Group")." "."add"." "._("error")."!", false); 
+                if (!$Admin->object_modify("userGroups", "add", "g_id", $values)) {
+                    $Result->show("danger",  _("Group")." "."add"." "._("error")."!", false);
                 }
-                else { 
-                    echo "  Group (created)\n"; 
+                else {
+                    echo "  Group (created)\n";
                     // Get new created phpipam group id
                     $groups_in_phpipam_db_tmp = $Admin->fetch_object ("userGroups", "g_name", $group );
-                    foreach ($groups_in_phpipam_db_tmp as $key=>$value) { 
+                    foreach ($groups_in_phpipam_db_tmp as $key=>$value) {
                         $phpipam_groups[$group][$key] = $value;
                     }
                 }
@@ -226,13 +248,13 @@ try {
                     $member_exists = $Admin->fetch_object ("users", "username", $directory_member);
                     if (empty($member_exists)) {
                         // Create user
-                        if ($directory_member_data['count'] != 1) { 
+                        if ($directory_member_data['count'] != 1) {
                             echo "      ERROR: More than one user found with samaccountname: ".$directory_member . "\n";
                         }
                         else {
                             // Define user-role (Default: User)
                             $role = "User";
-                            if ( array_key_exists($directory_member, $directory_admin_group_members) ) { 
+                            if ( array_key_exists($directory_member, $directory_admin_group_members) ) {
                                 $role = "Administrator";
                             }
 
@@ -251,11 +273,11 @@ try {
                                 "editdate"       =>date("Y-m-d h:m:s",time())
                                 );
 
-                            if (!$Admin->object_modify("users", "add", "id", $values)) { 
-                                $Result->show("danger",  _("Users")." "."add"." "._("error")."!", false); 
+                            if (!$Admin->object_modify("users", "add", "id", $values)) {
+                                $Result->show("danger",  _("Users")." "."add"." "._("error")."!", false);
                             }
-                            else { 
-                                echo "    ".escape_input($directory_member) . " (created)\n"; 
+                            else {
+                                echo "    ".escape_input($directory_member) . " (created)\n";
                                 // Update user data
                                 $member_exists = $Admin->fetch_object ("users", "username", $directory_member);
                             }
@@ -264,7 +286,7 @@ try {
                     // Split / save groups for easier use
                     $phpipam_user_groups = [];
                     foreach ( explode(",", $member_exists->groups) as $row=>$value) {
-                        $tmp = explode(':', str_replace('"', "", preg_replace(array('/{/', '/}/'), "",  $value))); 
+                        $tmp = explode(':', str_replace('"', "", preg_replace(array('/{/', '/}/'), "",  $value)));
                         if(sizeof($tmp) == 2) { $phpipam_user_groups[$tmp[0]] = $tmp[1]; }
                     }
                     // Add user to group (if missing)
@@ -273,7 +295,7 @@ try {
                         $phpipam_user_groups[ $phpipam_groups[$group]['g_id'] ] = $phpipam_groups[$group]['g_id'];
                         $new_groups = json_encode($phpipam_user_groups);
                         if (!$Admin->object_modify("users", "edit", "id", array("id"=>$member_exists->id, "groups"=>$new_groups))) {
-                            $Result->show("danger",  _("Users")." "."'add group to user'"." "._("error")."!", false); 
+                            $Result->show("danger",  _("Users")." "."'add group to user'"." "._("error")."!", false);
                         }
                         else {
                             echo "    ".escape_input($directory_member) . " (added)\n";
@@ -290,37 +312,37 @@ try {
                     if (array_key_exists($directory_member, $directory_admin_group_members)) {
                         if (array_key_exists($directory_member, $phpipam_user_data) and $phpipam_user_data[$directory_member]['role'] == 'User') {
                             // Set me as admin
-                            $values = array( 
+                            $values = array(
                                 "id"             =>$phpipam_user_data[$directory_member]['id'] ,
                                 "role"           =>"Administrator",
-                                "widgets"        =>$default_widgets['Administrator'] 
+                                "widgets"        =>$default_widgets['Administrator']
                             );
                         }
                     }
-                    else { 
+                    else {
                         if (array_key_exists($directory_member, $phpipam_user_data) and $phpipam_user_data[$directory_member]['role'] == 'Administrator') {
                             // Set me back to user
-                            $values = array( 
+                            $values = array(
                                 "id"             =>$phpipam_user_data[$directory_member]['id'],
                                 "role"           =>"User",
-                                "widgets"        =>$default_widgets['User'] 
+                                "widgets"        =>$default_widgets['User']
                             );
                         }
                     }
                     if ( array_key_exists("role",$values)) {
                         // Change user role according to set values
-                        if (!$Admin->object_modify("users", "edit", "id", $values)) { 
-                            $Result->show("danger",  _("Users")." "."edit"." "._("error")."!", false); 
+                        if (!$Admin->object_modify("users", "edit", "id", $values)) {
+                            $Result->show("danger",  _("Users")." "."edit"." "._("error")."!", false);
                         }
-                        else { 
-                            echo "      Role changed to ".$values['role']."\n"; 
+                        else {
+                            echo "      Role changed to ".$values['role']."\n";
                         }
                     }
                 }
 
                 // Get data once again (if user was added)
-                if ($reload_add_group_member) { 
-                    $phpipam_user_data_tmp = $Admin->fetch_multiple_objects ("users", "authMethod", $auth_methodId, $sortField = 'id', $sortAsc = true, $like = false, $result_fields = "*"); 
+                if ($reload_add_group_member) {
+                    $phpipam_user_data_tmp = $Admin->fetch_multiple_objects ("users", "authMethod", $auth_methodId, $sortField = 'id', $sortAsc = true, $like = false, $result_fields = "*");
                     // Make it easier to access
                     $phpipam_user_data = phpipam_user_group_membership_sort($phpipam_user_data_tmp);
                 }
@@ -344,7 +366,7 @@ try {
                         $new_groups = json_encode($phpipam_current_user_groups[$phpipam_member['username']]);
                         if (!$Admin->object_modify("users", "edit", "id", array("id"=>$phpipam_member['id'], "groups"=>$new_groups))) {
                         //if (!$Admin->remove_group_from_user(strval($phpipam_groups[$group]['g_id']),$phpipam_member['id'])) {
-                            $Result->show("danger",  _("Users")." "."'remove user from group'"." "._("error")."!", false); 
+                            $Result->show("danger",  _("Users")." "."'remove user from group'"." "._("error")."!", false);
                         }
                         else {
                             echo "    ".escape_input($phpipam_member['username']) . " (removed)\n";
@@ -375,7 +397,7 @@ try {
     // Make it easier to access
     $phpipam_user_data = phpipam_user_group_membership_sort($phpipam_user_data_tmp);
 
-    foreach ($phpipam_user_data as $phpipam_user) { 
+    foreach ($phpipam_user_data as $phpipam_user) {
         $user_exists = 0;
         if ($directory_group_members) {
             foreach ($directory_group_members as $directory_group) {
@@ -389,8 +411,8 @@ try {
         if (!$user_exists) {
             $message = 0;
             // Remove user from phpipam db
-            if (!$Admin->object_modify("users", "delete", "id", array("id"=>$phpipam_user['id']))) { 
-                $Result->show("danger",  _("User")." "."delete"." "._("error")."!", false); 
+            if (!$Admin->object_modify("users", "delete", "id", array("id"=>$phpipam_user['id']))) {
+                $Result->show("danger",  _("User")." "."delete"." "._("error")."!", false);
             }
             else { echo $phpipam_user['username']." (removed) \n"; }
         }
@@ -426,15 +448,15 @@ try {
         if (!$group_exists and ($g_desc !== '' and str_contains($g_desc,"imported")) ) {
             $message = 0;
             // Remove all group users and sections first
-            if (!$Admin->remove_group_from_users($g_id)) { 
-                $Result->show("danger",  _("Group")." "."remove from users"." "._("error")."!", false); 
+            if (!$Admin->remove_group_from_users($g_id)) {
+                $Result->show("danger",  _("Group")." "."remove from users"." "._("error")."!", false);
             }
-            if (!$Admin->remove_group_from_sections($g_id)) { 
-                $Result->show("danger",  _("Group")." "."remove from sections"." "._("error")."!", false); 
+            if (!$Admin->remove_group_from_sections($g_id)) {
+                $Result->show("danger",  _("Group")." "."remove from sections"." "._("error")."!", false);
             }
             // Delete group
-            if (!$Admin->object_modify("userGroups", "delete", "g_id", array("g_id"=>$g_id))) { 
-                $Result->show("danger",  _("Group")." "."delete"." "._("error")."!", false); 
+            if (!$Admin->object_modify("userGroups", "delete", "g_id", array("g_id"=>$g_id))) {
+                $Result->show("danger",  _("Group")." "."delete"." "._("error")."!", false);
             }
             else { echo "  ".$g_name." (imported group removed) \n"; }
         }
@@ -446,7 +468,7 @@ try {
 
 } catch (adLDAPException $e) {
     echo $e;
-    exit();   
+    exit();
 }
 
 exit();
